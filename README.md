@@ -4,7 +4,7 @@ This repository contains a production-grade, end-to-end LLMOps pipeline designed
 
 ---
 
-## 🏛️ Architecture Overview
+## Architecture Overview
 
 The pipeline implements an automated training, validation, serving, and monitoring loop. Below is the system flow:
 
@@ -55,7 +55,7 @@ flowchart TD
 
 ---
 
-## 🛠️ Technology Stack (Free-Tier Optimization)
+## Technology Stack (Free-Tier Optimization)
 
 | Layer | Tool | Rationale | Cost |
 |---|---|---|---|
@@ -70,7 +70,7 @@ flowchart TD
 
 ---
 
-## 📊 Phase 1: Dataset Preparation
+## Phase 1: Dataset Preparation
 
 We use the US Congressional Bills **BillSum** dataset to fine-tune our summarizer. 
 
@@ -113,7 +113,7 @@ Each split is exported as a JSON Lines (`.jsonl`) file in the required instructi
 
 ---
 
-## 🚀 Setup & Execution
+## Setup & Execution
 
 ### 1. Installation
 Clone the repository and install the dependencies:
@@ -143,11 +143,11 @@ If `HF_TOKEN` and `HF_DATASET_REPO` are set, it automatically pushes the process
 
 ---
 
-## 🎯 Phase 2: Fine-Tuning with Unsloth (on Kaggle)
+## Phase 2: Fine-Tuning with Unsloth (on Kaggle)
 
 We fine-tune **Llama-3.2-3B-Instruct** using QLoRA via Unsloth. The training is intended to run on a **Kaggle Notebook** with dual T4 GPUs (or a single T4 GPU) to utilize the free 30-hour weekly quota.
 
-### ⚙️ Hyperparameter Configuration (Constraint-Driven)
+### Hyperparameter Configuration (Constraint-Driven)
 To optimize training speed and conserve GPU hours, we adopt the following standard defaults rather than exhaustive trial-and-error:
 * **Base Model:** `unsloth/Llama-3.2-3B-Instruct-bnb-4bit` (4-bit quantized version of Llama-3.2 3B).
 * **LoRA Configuration:** Rank $r = 16$, alpha $\alpha = 16$, target modules include all major projection layers (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`).
@@ -156,11 +156,11 @@ To optimize training speed and conserve GPU hours, we adopt the following standa
 * **Optimization:** `adamw_8bit` optimizer, `learning_rate = 2e-4` with linear scheduler, weight decay = `0.01`.
 * **Execution Limit:** `max_steps = 60` (~0.2 epochs) for demonstration run, or set to `num_train_epochs = 1` for full coverage, keeping individual runtimes under 15–20 minutes.
 
-### 📈 Experiment Tracking & Registry
+### Experiment Tracking & Registry
 * **W&B integration:** Runs automatically register to Weights & Biases if `WANDB_API_KEY` is present.
 * **HF Model Registry:** Final QLoRA adapter is pushed to Hugging Face Model Hub under the repository specified by `HF_MODEL_REPO`.
 
-### 🚀 Running on Kaggle
+### Running on Kaggle
 
 To run this pipeline phase on Kaggle:
 1. Create a new Kaggle notebook and enable **GPU T4 x2** accelerator with **Internet Access ON**.
@@ -178,3 +178,24 @@ To run this pipeline phase on Kaggle:
    ```bash
    python3 src/train.py
    ```
+
+## Findings
+
+### Gemini Judge (LLM-as-a-Judge) Results
+- **Mean Relevance:** 3.42 / 5
+- **Mean Factual:** 3.50 / 5
+- **Mean Fluency:** 3.92 / 5
+- **Overall Average:** 3.61 / 5
+- **Number of evaluated examples:** 12
+
+### Observed Failure Patterns
+> **Repetition Loops** – The model frequently repeats long legal clauses verbatim (e.g., “Requires the permittee to comply with all applicable Federal and State laws…”) across different examples, indicating limited exposure during fine‑tuning.
+> **Truncation at Token Limit** – Several generations end abruptly mid‑sentence, suggesting the `max_new_tokens` setting is hitting its ceiling.
+
+### ROUGE Scores (Baseline)
+| Metric | Score |
+|--------|-------|
+| ROUGE‑1 | 0.490 |
+| ROUGE‑2 | 0.301 |
+| ROUGE‑L | 0.380 |
+
