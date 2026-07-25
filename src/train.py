@@ -149,6 +149,7 @@ def main():
             save_strategy="steps",
             save_steps=20,
             report_to=report_to,
+            average_tokens_across_devices=False,
         ),
     )
 
