@@ -141,3 +141,40 @@ This script outputs the processed files to:
 
 If `HF_TOKEN` and `HF_DATASET_REPO` are set, it automatically pushes the processed splits directly to your Hugging Face Datasets repository.
 
+---
+
+## 🎯 Phase 2: Fine-Tuning with Unsloth (on Kaggle)
+
+We fine-tune **Llama-3.2-3B-Instruct** using QLoRA via Unsloth. The training is intended to run on a **Kaggle Notebook** with dual T4 GPUs (or a single T4 GPU) to utilize the free 30-hour weekly quota.
+
+### ⚙️ Hyperparameter Configuration (Constraint-Driven)
+To optimize training speed and conserve GPU hours, we adopt the following standard defaults rather than exhaustive trial-and-error:
+* **Base Model:** `unsloth/Llama-3.2-3B-Instruct-bnb-4bit` (4-bit quantized version of Llama-3.2 3B).
+* **LoRA Configuration:** Rank $r = 16$, alpha $\alpha = 16$, target modules include all major projection layers (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`).
+* **Sequence Length Budget:** `max_seq_length = 2048` tokens.
+* **Effective Batch Sizing:** Per-device train batch size = `2`, gradient accumulation steps = `4` (simulates a stable effective batch size of `16` on free-tier memory).
+* **Optimization:** `adamw_8bit` optimizer, `learning_rate = 2e-4` with linear scheduler, weight decay = `0.01`.
+* **Execution Limit:** `max_steps = 60` (~0.2 epochs) for demonstration run, or set to `num_train_epochs = 1` for full coverage, keeping individual runtimes under 15–20 minutes.
+
+### 📈 Experiment Tracking & Registry
+* **W&B integration:** Runs automatically register to Weights & Biases if `WANDB_API_KEY` is present.
+* **HF Model Registry:** Final QLoRA adapter is pushed to Hugging Face Model Hub under the repository specified by `HF_MODEL_REPO`.
+
+### 🚀 Running on Kaggle
+
+To run this pipeline phase on Kaggle:
+1. Create a new Kaggle notebook and enable **GPU T4 x2** accelerator with **Internet Access ON**.
+2. Install the optimized Unsloth libraries at the top of the cell:
+   ```bash
+   pip install "unsloth[colab-new] @ git+https://github.com/unsloth-ai/unsloth.git"
+   pip install --no-deps trl peft transformers accelerate bitsandbytes python-dotenv
+   ```
+3. Upload your `data/processed/` JSONL files into the Kaggle workspace or dataset directory.
+4. Set environment secrets in the Kaggle Notebook settings (or using a local `.env` if running on a private GPU):
+   * `HF_TOKEN`: Hugging Face write token.
+   * `HF_MODEL_REPO`: Destination model repository (e.g. `yourname/billsum-llama3-lora`).
+   * `WANDB_API_KEY`: Weights & Biases API key.
+5. Run the training script:
+   ```bash
+   python3 src/train.py
+   ```
