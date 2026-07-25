@@ -1,7 +1,8 @@
 import os
 import sys
+import re
 import torch
-from datasets import Dataset
+from datasets import Dataset, load_dataset
 from dotenv import load_dotenv
 
 # Load local environment variables if available (.env)
@@ -60,11 +61,6 @@ def main():
     train_path = os.getenv("TRAIN_DATA_PATH", "data/processed/train.jsonl")
     val_path = os.getenv("VAL_DATA_PATH", "data/processed/val.jsonl")
 
-    if not os.path.exists(train_path) or not os.path.exists(val_path):
-        print(f"\n[-] Processed dataset splits not found at {train_path} or {val_path}.")
-        print("[-] Please run 'python3 src/data_prep.py' first to prepare the dataset.")
-        sys.exit(1)
-
     # 3. Model Loading & PEFT Configuration
     print(f"\n[+] Loading base model: {base_model_name}...")
     model, tokenizer = FastLanguageModel.from_pretrained(
@@ -89,9 +85,23 @@ def main():
     )
 
     # 4. Dataset Loading and Formatting
-    print("\n[+] Loading local datasets...")
-    train_dataset = Dataset.from_json(train_path)
-    val_dataset = Dataset.from_json(val_path)
+    print("\n[+] Loading datasets...")
+    if os.path.exists(train_path) and os.path.exists(val_path):
+        print(f"[+] Local files found. Loading from {train_path} and {val_path}...")
+        train_dataset = Dataset.from_json(train_path)
+        val_dataset = Dataset.from_json(val_path)
+    else:
+        hf_dataset_repo_data = os.getenv("HF_DATASET_REPO", "Tripti0911/billsum-processed")
+        # Normalize the repo name to remove any domain/prefix if user copied it from web URL
+        hf_dataset_repo_data = re.sub(r'^(?:https?://)?(?:huggingface\.co/datasets/)?', '', hf_dataset_repo_data)
+        print(f"[+] Local files not found. Loading from HF Hub dataset registry: {hf_dataset_repo_data}...")
+        try:
+            train_dataset = load_dataset(hf_dataset_repo_data, split="train")
+            val_dataset = load_dataset(hf_dataset_repo_data, split="validation")
+        except Exception as e:
+            print(f"\n[-] Failed to load dataset from Hugging Face Hub: {e}")
+            print("[-] Please run 'python3 src/data_prep.py' locally or set a valid HF_DATASET_REPO environment variable.")
+            sys.exit(1)
 
     print("[+] Formatting data into Llama-3 instruction templates...")
     train_dataset = train_dataset.map(formatting_prompts_func, batched=True)
