@@ -9,10 +9,14 @@ RUN apt-get update \
         g++ \
     && rm -rf /var/lib/apt/lists/*
 
+ENV CMAKE_BUILD_PARALLEL_LEVEL=1
+ENV MAKEFLAGS="-j1"
+
 RUN pip install --no-cache-dir \
     "fastapi>=0.111.0" \
-    "llama-cpp-python>=0.2.90" \
-    "uvicorn[standard]>=0.30.0"
+    "uvicorn[standard]>=0.30.0" \
+    llama-cpp-python \
+    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 
 COPY src ./src
 
