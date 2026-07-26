@@ -12,3 +12,6 @@ wandb>=0.16.0
 python-dotenv>=1.0.0
 unsloth==2026.7.5
 unsloth_zoo==2026.7.6
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+llama-cpp-python>=0.2.90
