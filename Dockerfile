@@ -15,6 +15,7 @@ ENV MAKEFLAGS="-j1"
 RUN pip install --no-cache-dir \
     "fastapi>=0.111.0" \
     "uvicorn[standard]>=0.30.0" \
+    huggingface_hub \
     llama-cpp-python \
     --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 

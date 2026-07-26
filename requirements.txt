@@ -15,3 +15,4 @@ unsloth_zoo==2026.7.6
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0
 llama-cpp-python>=0.2.90
+huggingface_hub
