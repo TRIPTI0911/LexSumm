@@ -1,17 +1,20 @@
-import os
 import json
+import os
+import time
+
 from datasets import load_dataset
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from google.genai import errors
-import time
+
 MAX_EXAMPLES = 30  # reduced to avoid quota exhaustion
 # Load .env to get the Gemini API key
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
-    raise RuntimeError("GEMINI_API_KEY not found in .env. Please add it before running the judge script.")
+    raise RuntimeError(
+        "GEMINI_API_KEY not found in .env. Please add it before running the judge script."
+    )
 
 # Configure the Gemini client
 client = genai.Client(api_key=api_key)
@@ -22,12 +25,9 @@ JUDGE_PROMPT = (
     "You are an expert legal‑summarization evaluator. Given a reference summary and a model‑generated "
     "prediction, rate the prediction on three criteria: relevance, factual correctness, and fluency, each "
     "from 1 (worst) to 5 (best). Return ONLY a JSON object with EXACTLY these keys, no others: "
-    "{\"relevance\": <int>, \"factual\": <int>, \"fluency\": <int>, "
-    "\"relevance_reasoning\": \"<one sentence>\", \"factual_reasoning\": \"<one sentence>\", \"fluency_reasoning\": \"<one sentence>\"}"
-    )
-
-
-
+    '{"relevance": <int>, "factual": <int>, "fluency": <int>, '
+    '"relevance_reasoning": "<one sentence>", "factual_reasoning": "<one sentence>", "fluency_reasoning": "<one sentence>"}'
+)
 
 
 def evaluate() -> list:
@@ -68,11 +68,13 @@ def evaluate() -> list:
                 attempts += 1
                 if attempts > 5:
                     # Quota likely exhausted – break out and stop further calls
-                    print("[WARN] Quota exhausted or max retries reached; stopping evaluation early.")
+                    print(
+                        "[WARN] Quota exhausted or max retries reached; stopping evaluation early."
+                    )
                     # Return whatever results we have so far
                     return results
                 # Wait longer each retry (exponential backoff)
-                time.sleep(2 ** attempts)
+                time.sleep(2**attempts)
         # Try to parse the JSON answer; handle possible markdown fences
         raw_text = response.text.strip()
         # Strip generic markdown fences (``` or ```json) if present
@@ -85,7 +87,7 @@ def evaluate() -> list:
                 raw_text = raw_text.rsplit("\n", 1)[0]
         try:
             scores = json.loads(raw_text)
-        except Exception:
+        except Exception:  # noqa: BLE001
             scores = {"error": raw_text}
         # Merge scores with the original example identifiers
         merged = {

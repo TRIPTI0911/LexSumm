@@ -3,7 +3,6 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).parents[2]
 ROUGE_RESULTS_PATH = REPO_ROOT / "eval_results_rouge.json"
 GEMINI_SUMMARY_PATH = REPO_ROOT / "eval_summary_gemini_judge.json"
@@ -57,13 +56,21 @@ def load_champion_scores(path: Path) -> dict | None:
     return load_json(path)
 
 
-def promotion_decision(champion: dict | None, challenger: dict, threshold: float) -> dict:
+def promotion_decision(
+    champion: dict | None, challenger: dict, threshold: float
+) -> dict:
     champion_score = None if champion is None else float(champion["combined_score"])
     challenger_score = float(challenger["combined_score"])
 
     promoted = champion_score is None or challenger_score > champion_score + threshold
-    margin = None if champion_score is None else round(challenger_score - champion_score, 6)
-    reason = "No cached champion exists." if champion is None else "Compared against cached champion."
+    margin = (
+        None if champion_score is None else round(challenger_score - champion_score, 6)
+    )
+    reason = (
+        "No cached champion exists."
+        if champion is None
+        else "Compared against cached champion."
+    )
 
     return {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),

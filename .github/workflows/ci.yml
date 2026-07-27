@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install black ruff
+
+      - name: Black
+        run: black --check .
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Compile Python
+        run: python -m compileall src
+
+      - name: Build Docker image
+        run: docker build -t lexsumm-api .
+
+      - name: Start Docker container
+        run: docker run -d --name lexsumm-api -p 7860:7860 lexsumm-api
+
+      - name: Wait for FastAPI
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:7860/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs lexsumm-api
+          exit 1
+
+      - name: Docker smoke test (/health)
+        run: curl -fsS http://localhost:7860/health
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop lexsumm-api || true
+          docker rm lexsumm-api || true

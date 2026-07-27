@@ -1,7 +1,8 @@
+from threading import Lock
+
 from fastapi import FastAPI, HTTPException
 from llama_cpp import Llama
 from pydantic import BaseModel, Field
-
 
 MODEL_REPO = "Tripti0911/lexsumm-llama3.2-3b-gguf"
 MODEL_FILENAME = "Llama-3.2-3B-Instruct.Q4_K_M.gguf"
@@ -9,15 +10,23 @@ DEFAULT_MAX_TOKENS = 256
 
 app = FastAPI(title="LexSumm Serving API")
 
-# Load the quantized GGUF once when the app starts so requests reuse the same
-# llama.cpp context instead of downloading and initializing the model each time.
-llm = Llama.from_pretrained(
-    repo_id=MODEL_REPO,
-    filename=MODEL_FILENAME,
-    n_ctx=4096,
-    n_threads=2,
-    verbose=False,
-)
+llm = None
+llm_lock = Lock()
+
+
+def get_llm() -> Llama:
+    global llm
+    if llm is None:
+        with llm_lock:
+            if llm is None:
+                llm = Llama.from_pretrained(
+                    repo_id=MODEL_REPO,
+                    filename=MODEL_FILENAME,
+                    n_ctx=4096,
+                    n_threads=2,
+                    verbose=False,
+                )
+    return llm
 
 
 class SummarizeRequest(BaseModel):
@@ -55,7 +64,7 @@ def summarize(request: SummarizeRequest) -> SummarizeResponse:
     max_tokens = request.max_new_tokens or DEFAULT_MAX_TOKENS
 
     try:
-        output = llm(
+        output = get_llm()(
             prompt,
             max_tokens=max_tokens,
             temperature=0.2,

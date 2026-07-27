@@ -1,16 +1,17 @@
 import json
-import os
 from pathlib import Path
 
 # Paths – assume script runs from repo root
 RESULTS_PATH = Path(__file__).parents[2] / "eval_results_gemini_judge.json"
 SUMMARY_PATH = Path(__file__).parents[2] / "eval_summary_gemini_judge.json"
 
+
 def load_results():
     if not RESULTS_PATH.is_file():
         raise FileNotFoundError(f"Gemini judge results not found at {RESULTS_PATH}")
     with open(RESULTS_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
+
 
 def compute_summary(results):
     # Expect each result dict to contain integer keys: relevance, factual, fluency
@@ -38,12 +39,14 @@ def compute_summary(results):
         "num_examples": count,
     }
 
+
 def main():
     results = load_results()
     summary = compute_summary(results)
     with open(SUMMARY_PATH, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(json.dumps(summary, indent=2))
+
 
 if __name__ == "__main__":
     main()

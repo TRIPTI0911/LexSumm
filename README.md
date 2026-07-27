@@ -207,51 +207,34 @@ The promotion gate currently operates on local score files; a production version
 
 The serving layer exposes a small FastAPI wrapper around the promoted summarization model using `llama-cpp-python` on CPU. The app loads the quantized GGUF model from `Tripti0911/lexsumm-llama3.2-3b-gguf` with filename `Llama-3.2-3B-Instruct.Q4_K_M.gguf`, then runs local inference inside the Docker container rather than calling a remote Hugging Face Inference API.
 
-The same container can run on any Docker host. The app code is not tied to the hosting provider because `Llama.from_pretrained(...)` pulls the GGUF model directly from Hugging Face Hub at container startup.
+The final serving deliverable is a working local Docker container. This is intentional: the quantized model requires roughly 2 GB RAM at runtime, which exceeds the free-tier limits for Render (512 MB) and Streamlit Community Cloud (1 GB). Hugging Face Spaces also now requires a paid plan for Docker SDK apps. An always-on hosted endpoint would cost approximately $25/month, such as a Render Standard tier service with 2 GB RAM, so this project demonstrates serving locally via Docker instead of keeping a paid public endpoint online.
 
-### Deploy to Render
+### Run Locally With Docker
 
-Render runs this service from the existing `Dockerfile`. The Docker command binds to `0.0.0.0` and uses Render's `PORT` environment variable, falling back to `7860` for local Docker runs.
-
-Option A: use `render.yaml`
-1. Push this repository to GitHub.
-2. In Render, choose **New > Blueprint**.
-3. Connect the GitHub repository that contains `render.yaml`.
-4. Confirm the `lexsumm-serving-api` web service settings.
-5. Choose the Free instance type if Render asks you to confirm the plan.
-6. Create the Blueprint and watch the first build in the Render Deploys tab.
-
-Option B: manual dashboard setup
-1. In Render, choose **New > Web Service**.
-2. Connect this GitHub repository.
-3. Set Runtime to **Docker**.
-4. Keep Dockerfile Path as `./Dockerfile` and Docker Context as `.`.
-5. Choose the Free instance type.
-6. Add an environment variable: `PORT=10000`.
-7. Set Health Check Path to `/health`.
-8. Create the service and watch the Deploys tab until the build succeeds.
-
-Render's free tier spins down a web service after inactivity. The first request after idle time will be slow because Render must restart the container, then `llama-cpp-python` must download and initialize the GGUF model again before `/health` or `/summarize` can respond.
-
-Run locally:
+Build the container:
 ```bash
-uvicorn src.serving.app:app --host 0.0.0.0 --port 7860
+docker build -t lexsumm-api .
 ```
 
-Request a summary:
+Run the API:
+```bash
+docker run -p 7860:7860 lexsumm-api
+```
+
+The first startup can take a few minutes because `Llama.from_pretrained(...)` downloads and initializes the GGUF model before the API is ready.
+
+Check the health endpoint:
+```bash
+curl http://localhost:7860/health
+```
+
+Request a legal summary:
 ```bash
 curl -X POST http://localhost:7860/summarize \
   -H "Content-Type: application/json" \
   -d '{"text": "Long legal bill text goes here."}'
 ```
 
-Test the live Render endpoint:
-```bash
-curl https://YOUR_RENDER_SERVICE.onrender.com/health
-```
+## Phase 6: CI/CD
 
-```bash
-curl -X POST https://YOUR_RENDER_SERVICE.onrender.com/summarize \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Long legal bill text goes here."}'
-```
+GitHub Actions automatically runs the CI pipeline on every push and pull request. The workflow validates Black formatting, Ruff linting, Python compilation, Docker image build, Docker container startup, and the FastAPI `/health` endpoint.
