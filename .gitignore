@@ -11,6 +11,14 @@ env/
 data/raw/
 data/processed/
 
+# Linting/tooling cache
+.ruff_cache/
+
+lora_adapter/
+outputs/
+merged_model/
+wandb/
+
 # IDE and system files
 .vscode/
 .idea/
