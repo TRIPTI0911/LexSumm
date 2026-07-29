@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  lexsumm:
+    container_name: lexsumm-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: lexsumm-api
+
+    ports:
+      - "7860:7860"
+
+    env_file:
+      - .env
+
+    environment:
+      PORT: 7860
+
+    restart: unless-stopped
+
+    volumes:
+      # Persist Hugging Face model cache so it isn't downloaded again
+      - huggingface_cache:/root/.cache/huggingface
+
+volumes:
+  huggingface_cache:

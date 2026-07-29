@@ -216,9 +216,14 @@ Build the container:
 docker build -t lexsumm-api .
 ```
 
-Run the API:
+Run the API (no monitoring):
 ```bash
 docker run -p 7860:7860 lexsumm-api
+```
+
+Run the API with Supabase logging (requires a local `.env` with `SUPABASE_DB_URL`):
+```bash
+docker run -p 7860:7860 --env-file .env lexsumm-api
 ```
 
 The first startup can take a few minutes because `Llama.from_pretrained(...)` downloads and initializes the GGUF model before the API is ready.
@@ -238,3 +243,39 @@ curl -X POST http://localhost:7860/summarize \
 ## Phase 6: CI/CD
 
 GitHub Actions automatically runs the CI pipeline on every push and pull request. The workflow validates Black formatting, Ruff linting, Python compilation, Docker image build, Docker container startup, and the FastAPI `/health` endpoint.
+
+## Phase 7: Orchestration
+
+Prefect provides a lightweight local orchestration layer in `flows/retrain_flow.py`. The flow checks whether processed data exists, prepares the dataset when retraining is needed, records the Kaggle training handoff, aggregates evaluation results, and runs the local champion/challenger promotion gate.
+
+Due to free GPU constraints, fine-tuning is executed manually on Kaggle. Prefect orchestrates the surrounding stages while the training step remains a documented manual handoff: upload the prepared dataset to Kaggle, run `src/train.py`, push the resulting model artifacts to Hugging Face Hub, then resume evaluation and promotion locally.
+
+Prepare/check the dataset and pause at the Kaggle handoff:
+```bash
+python3 flows/retrain_flow.py
+```
+
+After Kaggle training and model upload are complete, resume evaluation and promotion:
+```bash
+python3 flows/retrain_flow.py --resume
+```
+
+## Phase 8: Monitoring
+
+Monitoring is implemented with optional Supabase/Postgres logging and a Streamlit dashboard. The FastAPI service writes inference logs only when `SUPABASE_DB_URL` or `DATABASE_URL` is configured; if no database URL is set, serving continues normally with no monitoring side effects.
+
+The expected Supabase table is `inference_logs` with columns: `id`, `timestamp_utc`, `request_id`, `latency_ms`, `input_length`, `output_length`, `status`, `model_version`, `model_repo`, `model_filename`, and `error_message`. The app stores text lengths rather than full request/response bodies, which keeps monitoring lightweight and avoids retaining raw legal text in the dashboard table.
+
+Store your direct Supabase connection string in a local `.env` file:
+```bash
+SUPABASE_DB_URL="postgresql://postgres:<password>@<host>:<port>/postgres"
+```
+
+The Streamlit dashboard shows request volume, p50/p95 latency, success rate, latency trend, and recent request metadata.
+
+When running the API in Docker, pass the same `.env` file with `--env-file .env` (see Phase 5).
+
+Run the dashboard locally (reads `SUPABASE_DB_URL` from `.env` via `load_dotenv()`):
+```bash
+streamlit run src/monitoring/dashboard.py
+```

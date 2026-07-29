@@ -1,8 +1,11 @@
+import time
 from threading import Lock
 
 from fastapi import FastAPI, HTTPException
 from llama_cpp import Llama
 from pydantic import BaseModel, Field
+
+from src.monitoring.log_to_db import log_inference
 
 MODEL_REPO = "Tripti0911/lexsumm-llama3.2-3b-gguf"
 MODEL_FILENAME = "Llama-3.2-3B-Instruct.Q4_K_M.gguf"
@@ -60,6 +63,7 @@ def health() -> dict:
 
 @app.post("/summarize", response_model=SummarizeResponse)
 def summarize(request: SummarizeRequest) -> SummarizeResponse:
+    started_at = time.perf_counter()
     prompt = build_prompt(request.text.strip())
     max_tokens = request.max_new_tokens or DEFAULT_MAX_TOKENS
 
@@ -76,4 +80,16 @@ def summarize(request: SummarizeRequest) -> SummarizeResponse:
         raise HTTPException(status_code=502, detail=f"Inference failed: {exc}") from exc
 
     summary = output["choices"][0]["text"].strip()
+    latency_ms = (time.perf_counter() - started_at) * 1000
+
+    log_inference(
+        input_text=request.text,
+        output_summary=summary,
+        latency_ms=latency_ms,
+        model_version=f"{MODEL_REPO}/{MODEL_FILENAME}",
+        model_repo=MODEL_REPO,
+        model_filename=MODEL_FILENAME,
+        status="success",
+    )
+
     return SummarizeResponse(summary=summary)
