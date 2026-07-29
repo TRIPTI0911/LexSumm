@@ -5,7 +5,6 @@ from uuid import uuid4
 import psycopg2
 from dotenv import load_dotenv
 
-
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -52,24 +51,24 @@ def log_inference(
 
     conn = None
     try:
-            conn = get_connection()
-            with conn, conn.cursor() as cur:
-                cur.execute(
-                    INSERT_LOG_SQL,
-                    (
-                        str(uuid4()),
-                        latency_ms,
-                        len(input_text),
-                        len(output_summary),
-                        status,
-                        model_version,
-                        model_repo,
-                        model_filename,
-                        error_message,
-                    ),
-                )
-    except Exception as exc:
+        conn = get_connection()
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                INSERT_LOG_SQL,
+                (
+                    str(uuid4()),
+                    latency_ms,
+                    len(input_text),
+                    len(output_summary),
+                    status,
+                    model_version,
+                    model_repo,
+                    model_filename,
+                    error_message,
+                ),
+            )
+    except Exception as exc:  # noqa: BLE001 — intentional: logging must never break the main response
             logger.warning("Failed to write inference monitoring log: %s", exc)
     finally:
-            if conn is not None:
-                conn.close()
+        if conn is not None:
+            conn.close()

@@ -5,7 +5,6 @@ import psycopg2
 import streamlit as st
 from dotenv import load_dotenv
 
-
 load_dotenv()
 
 DATABASE_URL = os.getenv("SUPABASE_DB_URL")
