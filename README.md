@@ -1,281 +1,136 @@
-# LLMOps Pipeline: Domain-Specific Summarization Model (Legal Domain)
+# LexSumm — LLMOps Pipeline for Legal Bill Summarization
 
-This repository contains a production-grade, end-to-end LLMOps pipeline designed for fine-tuning, evaluating, serving, and monitoring a domain-specific summarization model (using BillSum for legal bill summarization). The system is built leveraging a **zero-cost free-tier stack** to showcase high maturity constraint-driven design decisions.
+An end-to-end LLMOps pipeline: fine-tune, evaluate, gate, serve, and monitor a domain-specific summarization model — built entirely on **free-tier infrastructure** to demonstrate the full production lifecycle, not just model training.
+
+Fine-tunes **Llama-3.2-3B-Instruct** via QLoRA on the [BillSum](https://huggingface.co/datasets/FiscalNote/billsum) dataset to summarize U.S. Congressional bills in the standard legislative-summary style.
+
+**Live artifacts:**
+[Dataset](https://huggingface.co/datasets/Tripti0911/billsum-processed) · [Model (LoRA)](https://huggingface.co/Tripti0911/lexsumm-llama3.2-3b-lora-v1) · [Quantized GGUF](https://huggingface.co/Tripti0911/lexsumm-llama3.2-3b-gguf) · [CI](../../actions)
+
+![HF Hub model repo](docs/screenshots/hf_hub.png)
+*Fine-tuned adapter and quantized GGUF versioned on Hugging Face Hub.*
 
 ---
 
-## Architecture Overview
-
-The pipeline implements an automated training, validation, serving, and monitoring loop. Below is the system flow:
+## Architecture
 
 ```mermaid
-flowchart TD
-    subgraph Data [1. Data Layer]
-        A[Hugging Face Datasets: BillSum] -->|Download & Clean| B[src/data_prep.py]
-        B -->|Subsample & Split| C[data/processed/]
-        C -->|Upload| D[HF Dataset Hub / Data Registry]
-    end
+flowchart LR
+    A[BillSum Dataset] -->|clean, dedupe, split| B[HF Hub<br/>Data Registry]
+    B -->|QLoRA on Kaggle T4| C[HF Hub<br/>Model Registry]
+    C --> D{Eval Gate<br/>ROUGE + LLM Judge}
+    D -->|beats champion| E[Promoted]
+    D -->|does not beat champion| F[Rejected]
+    E -->|merge + quantize| G[GGUF on HF Hub]
+    G --> H[FastAPI + llama.cpp<br/>Docker]
+    H -->|log every request| I[(Supabase)]
+    I --> J[Streamlit Dashboard]
 
-    subgraph FineTuning [2. Training Layer]
-        C -->|Read splits| E[Kaggle T4 GPU x2]
-        E -->|QLoRA: Unsloth| F[W&B: Run Tracking]
-        E -->|Push Adapter| G[HF Model Hub / Model Registry]
-    end
-
-    subgraph Evaluation [3. Evaluation Gate]
-        G -->|Fetch adapter| H[src/eval/rouge_eval.py]
-        G -->|Fetch adapter| I[src/eval/gemini_judge.py]
-        H -->|ROUGE / BERTScore| J[src/eval/promote.py]
-        I -->|LLM-as-a-Judge| J
-        J -->|Challenger beats Champ?| K{Promotion Gate}
-        K -->|Yes| L[Tag HF model as main/champion]
-        K -->|No| M[Reject Challenger]
-        L -->|Log event| N[(Supabase Database)]
-        M -->|Log event| N
-    end
-
-    subgraph Serving [4. Serving Layer]
-        L -->|Merge & Quantize to GGUF| O[HF Hub GGUF Registry]
-        O -->|Serve serverless| P[FastAPI serving/app.py]
-        P -->|Deploy| Q[HF Spaces / Modal]
-    end
-
-    subgraph Monitoring [5. Observability]
-        Q -->|Log metrics / predictions| N
-        N -->|Query logs| R[Streamlit Dashboard]
-        Q -->|Sample 10% traffic| I
-    end
-
-    style Data fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
-    style FineTuning fill:#efebe9,stroke:#5d4037,stroke-width:2px;
-    style Evaluation fill:#efe2ba,stroke:#f57c00,stroke-width:2px;
-    style Serving fill:#e8f5e9,stroke:#388e3c,stroke-width:2px;
-    style Monitoring fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+    style A fill:#1e3a5f,stroke:#4a90d9,color:#fff
+    style B fill:#1e3a5f,stroke:#4a90d9,color:#fff
+    style C fill:#3d2b1f,stroke:#c17a4a,color:#fff
+    style D fill:#4a3b1f,stroke:#d9a84a,color:#fff
+    style E fill:#1f3d2b,stroke:#4ad97a,color:#fff
+    style F fill:#3d1f1f,stroke:#d94a4a,color:#fff
+    style G fill:#1f3d2b,stroke:#4ad97a,color:#fff
+    style H fill:#2b1f3d,stroke:#a84ad9,color:#fff
+    style I fill:#2b1f3d,stroke:#a84ad9,color:#fff
+    style J fill:#2b1f3d,stroke:#a84ad9,color:#fff
 ```
 
----
+CI (GitHub Actions) lints, builds, and smoke-tests the container on every push. Orchestration is handled by a lightweight Prefect flow with a documented manual handoff for the GPU training step (see [Orchestration](#orchestration--cicd)).
 
-## Technology Stack (Free-Tier Optimization)
-
-| Layer | Tool | Rationale | Cost |
-|---|---|---|---|
-| **Fine-Tuning** | Unsloth + QLoRA | Fits 3B/4B models comfortably on free-tier T4 GPU (up to 2x faster, 70% memory reduction). | **$0** |
-| **Experiment Tracking** | Weights & Biases | Free hosting for runs, config history, loss curves, and artifact tracking. | **$0** |
-| **Model & Data Registry** | Hugging Face Hub | Host and version datasets & LoRA/GGUF model adapters natively. | **$0** |
-| **Evaluation** | Local CPU + Gemini Flash | ROUGE/BERTScore compute locally. Gemini 2.0/2.5 Flash API serves as a low-cost, high-quality judge. | **$0** |
-| **Serving** | HF Inference Endpoints / Spaces | Serverless scale-to-zero serving or free CPU container hosting for the API. | **$0** |
-| **CI/CD** | GitHub Actions | Automatically run unit tests, check linting, and build/push FastAPI Docker image. | **$0** |
-| **Orchestration** | Prefect (Local Process) | Lightweight automation. Triggers data checks and orchestrates Kaggle training via Kaggle API. | **$0** |
-| **Monitoring** | Supabase + Streamlit | PostgreSQL logs requests (latency, inputs, outputs, cost). Streamlit hosts a public dashboard. | **$0** |
+![CI passing](docs/screenshots/ci_cd.png)
+*GitHub Actions: lint, Docker build, and health-check smoke test running on every push.*
 
 ---
 
-## Phase 1: Dataset Preparation
+## Stack — all $0
 
-We use the US Congressional Bills **BillSum** dataset to fine-tune our summarizer. 
-
-### Subsampling & Preprocessing Decisions (Why & How)
-
-To build a reliable and budget-conscious fine-tuning dataset, we apply the following data preparation rules inside [src/data_prep.py](file:///Users/triptigupta/Desktop/LexSumm/src/data_prep.py):
-
-1. **Length Constraint Filtering (The sequence budget):**
-   * Pre-trained model context windows (such as Phi-3-mini or Llama-3.2) typically run with a 2048-token context window during training to optimize memory. 
-   * A token is roughly 4 characters. To fit the instruction prompt, source text, and summary target within **2048 tokens**, we restrict text lengths to:
-     * **Source text (Bill)**: between `1,500` and `6,000` characters.
-     * **Summary**: between `200` and `1,500` characters.
-   * If a bill is too short, it doesn't present a realistic summarization task. If it's too long, truncation will sever the tail-end of the bill and lead to incomplete summarizations.
-2. **Quality Gate Cleaning:**
-   * Removes congressional header boilerplate (e.g., sessions, H.R. numbers) using regular expressions.
-   * Standardizes TeX-style quotes (normalizes `` ` `` `` and `''` to `"`) to keep tokenization clean.
-   * Normalizes redundant whitespaces, newlines, and tabs.
-   * **Near-Deduplication:** Prevents leakage of identical bills re-introduced in different congressional sessions with minor header edits. This is done by extracting the first ~800 characters of the bill, removing all non-alphanumeric characters, and dropping duplicates using the resulting normalized 500-character prefix hash.
-   * Drops invalid/flipped examples. *(Note: Extractive shortcut checking is documented but omitted since BillSum summaries are professionally written abstracts.)*
-3. **Deliberate Systematic Subsampling:**
-   * To prevent sampling bias, we sort the cleaned and length-filtered corpus by character length and systematically extract **3,500** evenly-spaced examples.
-   * This non-random approach guarantees that the training, validation, and test datasets represent an identical length distribution range of short, medium, and long bills.
-4. **Deterministic Stratified Splits:**
-   * Using length-based quantiles, we split the 3,500 pool into:
-     * **Train**: 3,000 examples
-     * **Validation**: 300 examples
-     * **Test**: 200 examples
-   * Stratification ensures the validation and test datasets represent the exact same length distributions as the training set, preventing evaluation skew.
-   * The split process includes fallback error handling to guarantee reliability if stratification bins become fragile.
-
-### Data Format
-Each split is exported as a JSON Lines (`.jsonl`) file in the required instruction-style format:
-```json
-{
-  "instruction": "Summarize the following legal bill.",
-  "input": "...",
-  "output": "..."
-}
-```
+| Layer | Tool |
+|---|---|
+| Fine-tuning | Unsloth (QLoRA) on Kaggle T4 |
+| Tracking | Weights & Biases |
+| Registry | Hugging Face Hub (dataset + LoRA + GGUF) |
+| Evaluation | ROUGE/BERTScore (local) + Gemini 2.0 Flash (LLM-as-judge) |
+| Promotion | Custom champion/challenger gate |
+| Serving | FastAPI + llama-cpp-python, Docker |
+| CI/CD | GitHub Actions |
+| Orchestration | Prefect |
+| Monitoring | Supabase (Postgres) + Streamlit |
 
 ---
 
-## Setup & Execution
+## Results
 
-### 1. Installation
-Clone the repository and install the dependencies:
-```bash
-pip install -r requirements.txt
-```
+**ROUGE (200-example test set):**
 
-### 2. Run Data Preparation & Registry Upload
-To download, clean, filter, split, and optionally upload the dataset:
-
-1. **(Optional) Configure environment variables for HF dataset registry:**
-   ```bash
-   export HF_TOKEN="your_hf_write_token"
-   export HF_DATASET_REPO="your_username/billsum-processed"
-   ```
-2. **Execute the script:**
-   ```bash
-   python3 src/data_prep.py
-   ```
-
-This script outputs the processed files to:
-* `data/processed/train.jsonl`
-* `data/processed/val.jsonl`
-* `data/processed/test.jsonl`
-
-If `HF_TOKEN` and `HF_DATASET_REPO` are set, it automatically pushes the processed splits directly to your Hugging Face Datasets repository.
-
----
-
-## Phase 2: Fine-Tuning with Unsloth (on Kaggle)
-
-We fine-tune **Llama-3.2-3B-Instruct** using QLoRA via Unsloth. The training is intended to run on a **Kaggle Notebook** with dual T4 GPUs (or a single T4 GPU) to utilize the free 30-hour weekly quota.
-
-### Hyperparameter Configuration (Constraint-Driven)
-To optimize training speed and conserve GPU hours, we adopt the following standard defaults rather than exhaustive trial-and-error:
-* **Base Model:** `unsloth/Llama-3.2-3B-Instruct-bnb-4bit` (4-bit quantized version of Llama-3.2 3B).
-* **LoRA Configuration:** Rank $r = 16$, alpha $\alpha = 16$, target modules include all major projection layers (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`).
-* **Sequence Length Budget:** `max_seq_length = 2048` tokens.
-* **Effective Batch Sizing:** Per-device train batch size = `2`, gradient accumulation steps = `4` (simulates a stable effective batch size of `16` on free-tier memory).
-* **Optimization:** `adamw_8bit` optimizer, `learning_rate = 2e-4` with linear scheduler, weight decay = `0.01`.
-* **Execution Limit:** `max_steps = 60` (~0.2 epochs) for demonstration run, or set to `num_train_epochs = 1` for full coverage, keeping individual runtimes under 15–20 minutes.
-
-### Experiment Tracking & Registry
-* **W&B integration:** Runs automatically register to Weights & Biases if `WANDB_API_KEY` is present.
-* **HF Model Registry:** Final QLoRA adapter is pushed to Hugging Face Model Hub under the repository specified by `HF_MODEL_REPO`.
-
-### Running on Kaggle
-
-To run this pipeline phase on Kaggle:
-1. Create a new Kaggle notebook and enable **GPU T4 x2** accelerator with **Internet Access ON**.
-2. Install the optimized Unsloth libraries at the top of the cell:
-   ```bash
-   pip install "unsloth[colab-new] @ git+https://github.com/unsloth-ai/unsloth.git"
-   pip install --no-deps trl peft transformers accelerate bitsandbytes python-dotenv
-   ```
-3. Upload your `data/processed/` JSONL files into the Kaggle workspace or dataset directory.
-4. Set environment secrets in the Kaggle Notebook settings (or using a local `.env` if running on a private GPU):
-   * `HF_TOKEN`: Hugging Face write token.
-   * `HF_MODEL_REPO`: Destination model repository (e.g. `yourname/billsum-llama3-lora`).
-   * `WANDB_API_KEY`: Weights & Biases API key.
-5. Run the training script:
-   ```bash
-   python3 src/train.py
-   ```
-
-## Findings
-
-### Gemini Judge (LLM-as-a-Judge) Results
-- **Mean Relevance:** 3.42 / 5
-- **Mean Factual:** 3.50 / 5
-- **Mean Fluency:** 3.92 / 5
-- **Overall Average:** 3.61 / 5
-- **Number of evaluated examples:** 12
-
-### Observed Failure Patterns
-> **Repetition Loops** – The model frequently repeats long legal clauses verbatim (e.g., “Requires the permittee to comply with all applicable Federal and State laws…”) across different examples, indicating limited exposure during fine‑tuning.
-> **Truncation at Token Limit** – Several generations end abruptly mid‑sentence, suggesting the `max_new_tokens` setting is hitting its ceiling.
-
-### ROUGE Scores (Baseline)
 | Metric | Score |
-|--------|-------|
-| ROUGE‑1 | 0.490 |
-| ROUGE‑2 | 0.301 |
-| ROUGE‑L | 0.380 |
+|---|---|
+| ROUGE-1 | 0.490 |
+| ROUGE-2 | 0.301 |
+| ROUGE-L | 0.380 |
 
-## Phase 4: Champion/Challenger Promotion Gate
+**Gemini-as-judge (12-example sample, 1–5 scale):**
 
-The promotion gate currently operates on local score files; a production version would additionally tag the promoted model's exact revision on the model registry (HF Hub) so serving always pulls the currently-promoted version specifically, rather than always pulling main.
+| Relevance | Factual | Fluency | Overall |
+|---|---|---|---|
+| 3.42 | 3.50 | 3.92 | 3.61 |
 
-## Phase 5: Serving / Deployment
+**What the eval surfaced:** fluency is consistently strong, but relevance/factual scores are bimodal — the model either captures a bill's core provisions accurately or confidently summarizes the wrong section with equal fluency. It also shows two clear failure modes: **repeated verbatim clauses** on longer bills, and **truncation** at the token limit. All consistent with a 60-step fine-tune run intended to validate the pipeline, not a fully converged model — a longer run would likely close this gap.
 
-The serving layer exposes a small FastAPI wrapper around the promoted summarization model using `llama-cpp-python` on CPU. The app loads the quantized GGUF model from `Tripti0911/lexsumm-llama3.2-3b-gguf` with filename `Llama-3.2-3B-Instruct.Q4_K_M.gguf`, then runs local inference inside the Docker container rather than calling a remote Hugging Face Inference API.
+---
 
-The final serving deliverable is a working local Docker container. This is intentional: the quantized model requires roughly 2 GB RAM at runtime, which exceeds the free-tier limits for Render (512 MB) and Streamlit Community Cloud (1 GB). Hugging Face Spaces also now requires a paid plan for Docker SDK apps. An always-on hosted endpoint would cost approximately $25/month, such as a Render Standard tier service with 2 GB RAM, so this project demonstrates serving locally via Docker instead of keeping a paid public endpoint online.
+## Pipeline Phases
 
-### Run Locally With Docker
+**1. Data** — BillSum cleaned (boilerplate stripped, TeX quotes normalized), near-duplicate bills across sessions removed via prefix hashing, length-filtered to a 2048-token budget, and split 3000/300/200 with deterministic length-stratified sampling. Versioned on HF Hub as the data registry.
 
-Build the container:
+**2. Fine-tuning** — Llama-3.2-3B-Instruct, QLoRA (r=16) via Unsloth, run on Kaggle's free T4. Encountered and fixed two real upstream bugs: an Unsloth/Transformers loss-scaling incompatibility (`average_tokens_across_devices=False`) and a checkpoint-pickling crash from Unsloth's compiled-cache monkey-patching (resolved by disabling mid-run checkpoint saves, unneeded for a short validation run).
+
+**3. Evaluation** — ROUGE/BERTScore locally, Gemini Flash as LLM-judge on a structured rubric (relevance/factual/fluency + reasoning), with markdown-safe JSON parsing and rate-limit backoff.
+
+**4. Promotion gate** — Combines normalized ROUGE + judge scores into one comparable metric; a challenger only replaces the champion if it beats it beyond a threshold. Verified in both directions: the first checkpoint auto-promotes (no champion yet), and a synthetic worse challenger is correctly rejected without overwriting the champion.
+
+**5. Serving** — LoRA merged and quantized to GGUF (Q4_K_M), served via FastAPI + `llama-cpp-python` in Docker. **Runs and is verified locally**, not hosted publicly: the model needs ~2GB RAM, which exceeds every free hosting tier checked (Render 512MB, Streamlit Cloud 1GB, HF Spaces Docker now requires a paid plan). An always-on host would run ~$25/mo (Render Standard, 2GB) — a deliberate cost/scope decision, not a limitation of the code.
+
+![Live inference](docs/screenshots/summary.png)
+*Container running locally, correctly summarizing a real bill via `curl`.*
+
+**6. CI/CD** — GitHub Actions lints (Black/Ruff), builds the Docker image, starts the container, and polls `/health` until ready.
+
+**7. Orchestration** — A Prefect flow chains dataset prep → (manual Kaggle training handoff) → evaluation → promotion. The GPU step is a documented manual handoff, since Kaggle training can't be triggered headlessly from a free-tier flow.
+
+**8. Monitoring** — Every request logs to Supabase (latency, input/output length, status, model version) — text lengths only, not raw content. A Streamlit dashboard shows request volume, p50/p95 latency, success rate, and recent requests.
+
+![Supabase inference log](docs/screenshots/Supabase_data.png)
+*A real logged request in the `inference_logs` table.*
+
+![Monitoring dashboard](docs/screenshots/live_inference.png)
+*Streamlit dashboard showing live request volume, latency, and success rate.*
+
+---
+
+## Running It
+
 ```bash
-docker build -t lexsumm-api .
-```
+# Data pipeline
+python3 src/data_prep.py
 
-Run the API (no monitoring):
-```bash
-docker run -p 7860:7860 lexsumm-api
-```
+# Evaluation (after training on Kaggle — see src/train.py)
+python3 src/eval/rouge_eval.py
+python3 src/eval/gemini_judge.py
+python3 src/eval/aggregate_judge_scores.py
+python3 src/eval/promote.py --update
 
-Run the API with Supabase logging (requires a local `.env` with `SUPABASE_DB_URL`):
-```bash
-docker run -p 7860:7860 --env-file .env lexsumm-api
-```
-
-The first startup can take a few minutes because `Llama.from_pretrained(...)` downloads and initializes the GGUF model before the API is ready.
-
-Check the health endpoint:
-```bash
+# Serving (with monitoring)
+docker-compose up --build
 curl http://localhost:7860/health
-```
-
-Request a legal summary:
-```bash
 curl -X POST http://localhost:7860/summarize \
   -H "Content-Type: application/json" \
-  -d '{"text": "Long legal bill text goes here."}'
-```
+  -d '{"text": "Full bill text here."}'
 
-## Phase 6: CI/CD
-
-GitHub Actions automatically runs the CI pipeline on every push and pull request. The workflow validates Black formatting, Ruff linting, Python compilation, Docker image build, Docker container startup, and the FastAPI `/health` endpoint.
-
-## Phase 7: Orchestration
-
-Prefect provides a lightweight local orchestration layer in `flows/retrain_flow.py`. The flow checks whether processed data exists, prepares the dataset when retraining is needed, records the Kaggle training handoff, aggregates evaluation results, and runs the local champion/challenger promotion gate.
-
-Due to free GPU constraints, fine-tuning is executed manually on Kaggle. Prefect orchestrates the surrounding stages while the training step remains a documented manual handoff: upload the prepared dataset to Kaggle, run `src/train.py`, push the resulting model artifacts to Hugging Face Hub, then resume evaluation and promotion locally.
-
-Prepare/check the dataset and pause at the Kaggle handoff:
-```bash
-python3 flows/retrain_flow.py
-```
-
-After Kaggle training and model upload are complete, resume evaluation and promotion:
-```bash
-python3 flows/retrain_flow.py --resume
-```
-
-## Phase 8: Monitoring
-
-Monitoring is implemented with optional Supabase/Postgres logging and a Streamlit dashboard. The FastAPI service writes inference logs only when `SUPABASE_DB_URL` or `DATABASE_URL` is configured; if no database URL is set, serving continues normally with no monitoring side effects.
-
-The expected Supabase table is `inference_logs` with columns: `id`, `timestamp_utc`, `request_id`, `latency_ms`, `input_length`, `output_length`, `status`, `model_version`, `model_repo`, `model_filename`, and `error_message`. The app stores text lengths rather than full request/response bodies, which keeps monitoring lightweight and avoids retaining raw legal text in the dashboard table.
-
-Store your direct Supabase connection string in a local `.env` file:
-```bash
-SUPABASE_DB_URL="postgresql://postgres:<password>@<host>:<port>/postgres"
-```
-
-The Streamlit dashboard shows request volume, p50/p95 latency, success rate, latency trend, and recent request metadata.
-
-When running the API in Docker, pass the same `.env` file with `--env-file .env` (see Phase 5).
-
-Run the dashboard locally (reads `SUPABASE_DB_URL` from `.env` via `load_dotenv()`):
-```bash
+# Monitoring dashboard
 streamlit run src/monitoring/dashboard.py
 ```
+
+Requires a `.env` with `HF_TOKEN`, `HF_DATASET_REPO`, `HF_MODEL_REPO`, `WANDB_API_KEY`, `GEMINI_API_KEY`, and `SUPABASE_DB_URL` (pooler connection string — direct connections can fail to resolve from inside Docker).

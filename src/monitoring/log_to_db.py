@@ -67,8 +67,8 @@ def log_inference(
                     error_message,
                 ),
             )
-    except Exception as exc:  # noqa: BLE001 — intentional: logging must never break the main response
-            logger.warning("Failed to write inference monitoring log: %s", exc)
+    except Exception as exc:  # noqa: BLE001 (best-effort logging)
+        logger.warning("Failed to write inference monitoring log: %s", exc)
     finally:
         if conn is not None:
             conn.close()
